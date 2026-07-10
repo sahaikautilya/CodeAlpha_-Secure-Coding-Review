@@ -50,12 +50,6 @@ SecureLoginMVC/
 
 ---
 
-🚀 Installation
-
-Clone the repository:
-
-git clone https://github.com/yourusername/SecureLoginMVC.git
-
 Move into the project directory:
 
 cd SecureLoginMVC
@@ -71,12 +65,6 @@ python create_db.py
 Run the application:
 
 python app.py
-
-Open your browser and visit:
-
-http://127.0.0.1:5000
-
----
 
 👥 Default Test Accounts
 
