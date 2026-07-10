@@ -1,0 +1,67 @@
+"""
+SECURE MODEL LAYER (fixed version)
+------------------------------------
+This is the corrected version of model.py from vulnerable_app/.
+
+Fixes applied:
+  1. SQL Injection -> fixed with parameterized queries (the DB driver
+     escapes input automatically; user input is never glued into the
+     SQL string).
+  2. Plaintext passwords -> fixed with password hashing (Werkzeug's
+     generate_password_hash / check_password_hash, which uses a salted
+     hash).
+"""
+
+import sqlite3
+from werkzeug.security import generate_password_hash, check_password_hash
+
+DB_PATH = "users_secure.db"
+
+
+def get_connection():
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    return conn
+
+
+def create_user(username, plain_password, role):
+    """Stores a new user with a hashed password (never store plaintext)."""
+    conn = get_connection()
+    cur = conn.cursor()
+    password_hash = generate_password_hash(plain_password)
+    cur.execute(
+        "INSERT INTO users (username, password_hash, role) VALUES (?, ?, ?)",
+        (username, password_hash, role)
+    )
+    conn.commit()
+    conn.close()
+
+
+def authenticate_user(username, password):
+    """
+    SECURE VERSION:
+      - Uses a parameterized query ("?" placeholders), so the database
+        driver treats `username` strictly as data, never as part of
+        the SQL command. Injection payloads like admin' OR '1'='1
+        are simply treated as a literal username string and will not
+        match any real row.
+      - Compares the password against a stored salted hash instead of
+        plaintext.
+    """
+    conn = get_connection()
+    cur = conn.cursor()
+
+    # --- FIXED LINE: parameterized query, no string concatenation ---
+    cur.execute("SELECT * FROM users WHERE username = ?", (username,))
+    # ------------------------------------------------------------------
+
+    user = cur.fetchone()
+    conn.close()
+
+    if user is None:
+        return None
+
+    if check_password_hash(user["password_hash"], password):
+        return user
+
+    return None
