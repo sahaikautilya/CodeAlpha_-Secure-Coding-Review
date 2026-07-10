@@ -1,0 +1,18 @@
+import sys
+sys.path.insert(0, ".")
+import model_secure as model
+
+PAYLOADS = [
+    ("admin' OR '1'='1", "anything"),
+    ("admin'--", "anything"),
+    ("' OR 1=1 --", "anything"),
+]
+
+print("Testing secure model against the same SQLi payloads...\n")
+for u, p in PAYLOADS:
+    result = model.authenticate_user(u, p)
+    print(f"Payload: {u!r} / {p!r} -> {'BYPASSED' if result else 'blocked (correct)'}")
+
+print("\nTesting correct login still works:")
+result = model.authenticate_user("admin", "admin123")
+print(f"admin/admin123 -> {'SUCCESS, role=' + result['role'] if result else 'FAILED'}")
