@@ -1,0 +1,206 @@
+# Secure Coding Review — Login System (Python / Flask, MVC)
+
+**Author:** [Your Name]
+**Internship:** CodeAlpha — Cyber Security (Task 3: Secure Coding Review)
+**Date:** June 2026
+
+---
+
+## 1. Introduction
+
+The application under review is a small **multi-layer (MVC) login system**
+built in Python with Flask:
+
+- **View layer** — `login.html` / `dashboard.html` (HTML + CSS)
+- **Model layer** — `model.py` (talks to the SQLite database `users.db`)
+- **Controller layer** — `app.py` (Flask routes; handles requests from the
+  view, calls the model, and decides what the user is authorized to see
+  based on their role — `admin` vs `user`)
+
+Its purpose: accept a user ID and password from a login form, check the
+credentials against the database, and grant role-based access to a
+dashboard. This is the same pattern used in countless real login systems,
+which is why it's a good target to audit.
+
+The review covered both the original code (`vulnerable_app/`) and a
+corrected version (`secure_app/`).
+
+## 2. Tools Used
+
+- **Manual code review** against the OWASP Top 10, focused on the
+  database access code (`model.py`) and the controller (`app.py`).
+- **Bandit** (Python SAST tool) is the standard tool for this — it
+  flags rules such as `B608: hardcoded_sql_expressions` and
+  `B105/B106: hardcoded_password_string` for exactly the patterns found
+  here. (Bandit could not be installed in this sandboxed review
+  environment, so findings below were confirmed manually — see Section 3.)
+- **Live exploitation test** (`security_check.py`) — instead of only
+  theorizing about the vulnerability, I wrote a script that actually
+  attempts SQL Injection payloads against the running `authenticate_user()`
+  function, to prove the flaw is real and not just a stylistic issue.
+
+## 3. Vulnerability Log
+
+### 3.1 SQL Injection (Critical)
+
+**The Problem**
+In `model.py`, `authenticate_user()` builds the SQL query by concatenating
+raw user input directly into the string:
+
+```python
+query = "SELECT * FROM users WHERE username = '" + username + \
+        "' AND password = '" + password + "'"
+cur.execute(query)
+```
+
+**The Risk**
+Anyone typing into the login form can change the *meaning* of the SQL
+query. I confirmed this by running `security_check.py`, which sent the
+username `admin' OR '1'='1` with an arbitrary password. The query became:
+
+```sql
+SELECT * FROM users WHERE username = 'admin' OR '1'='1' AND password = 'anything'
+```
+
+`'1'='1'` is always true, so the query returned the `admin` row —
+**logging in as the administrator with zero correct credentials.**
+Three out of four tested payloads succeeded in bypassing the login
+entirely. An attacker could use this to take over any account, dump the
+entire `users` table, or in a more complex app, modify/delete data.
+
+**The Fix**
+Use a **parameterized query** so user input is always treated as data,
+never as part of the SQL command:
+
+```python
+# Before (vulnerable)
+query = "SELECT * FROM users WHERE username = '" + username + \
+        "' AND password = '" + password + "'"
+cur.execute(query)
+
+# After (fixed) — see secure_app/model_secure.py
+cur.execute("SELECT * FROM users WHERE username = ?", (username,))
+```
+
+I re-ran the same payloads against the fixed version
+(`secure_app/verify_fix.py`) — all three were blocked, while the real
+admin login (`admin` / `admin123`) still worked correctly.
+
+### 3.2 Plaintext Password Storage (High)
+
+**The Problem**
+In `setup_db.py`, passwords are stored as plain text:
+
+```python
+("admin", "admin123", "admin")
+```
+
+and compared directly inside the SQL query above.
+
+**The Risk**
+If the database file (`users.db`) is ever leaked, copied, or accessed
+through another bug, every user's real password is immediately exposed
+in readable form — and since people reuse passwords, this risk extends
+to their other accounts too.
+
+**The Fix**
+Store a salted hash instead of the password itself, and verify by
+hashing the login attempt and comparing:
+
+```python
+# Before (vulnerable) — plaintext
+("admin", "admin123", "admin")
+
+# After (fixed) — secure_app/setup_db_secure.py + model_secure.py
+from werkzeug.security import generate_password_hash, check_password_hash
+
+password_hash = generate_password_hash("admin123")
+# ... stored in DB ...
+check_password_hash(stored_hash, attempted_password)  # True/False
+```
+
+### 3.3 Hardcoded Secret Key (Medium)
+
+**The Problem**
+In `app.py`:
+
+```python
+app.secret_key = "dev-secret-key"
+```
+
+**The Risk**
+Flask uses `secret_key` to cryptographically sign session cookies. A
+hardcoded, predictable key means an attacker who sees this value (e.g.
+from the public GitHub repo) could forge a valid session cookie and
+impersonate any logged-in user, including an admin.
+
+**The Fix**
+Load the secret from an environment variable, never commit it to source
+control:
+
+```python
+import os
+app.secret_key = os.environ["FLASK_SECRET_KEY"]
+```
+
+### 3.4 Debug Mode Enabled (Medium)
+
+**The Problem**
+
+```python
+app.run(debug=True)
+```
+
+**The Risk**
+Flask's debug mode exposes a full interactive Python debugger in the
+browser whenever an unhandled exception occurs. If this ever reached a
+real server, anyone who can trigger an error could potentially execute
+arbitrary Python code on the host.
+
+**The Fix**
+Never enable `debug=True` outside local development:
+
+```python
+app.run(debug=False)  # or controlled via an environment variable
+```
+
+### 3.5 No Rate Limiting / Brute-Force Protection (Low–Medium)
+
+**The Problem**
+The `/login` route accepts unlimited login attempts with no delay or
+lockout.
+
+**The Risk**
+Combined with weak passwords, an attacker can brute-force credentials by
+script, trying thousands of password guesses per minute.
+
+**The Fix**
+Add a rate limiter (e.g. `Flask-Limiter`) on `/login`, and lock or delay
+an account after several failed attempts.
+
+## 4. Best Practices Summary
+
+1. **Never trust user input** — always validate it, and never build
+   queries/commands by concatenating it into strings. Use parameterized
+   queries / prepared statements every time.
+2. **Never store secrets or passwords in plaintext** — hash passwords
+   with a strong, salted algorithm (e.g. via `werkzeug.security` or
+   `bcrypt`), and load API keys/secret keys from environment variables.
+3. **Principle of least privilege** — give each account (and each part
+   of the code) only the access it actually needs; role checks should
+   happen on the server/controller, never trusted from the client.
+4. **Fail securely and quietly** — error messages should not reveal
+   whether a username exists or expose stack traces/debug info to users.
+5. **Keep dependencies and configuration audited** — disable debug mode
+   in anything beyond local development, and periodically scan
+   dependencies for known vulnerabilities.
+
+## 5. Conclusion
+
+The original login system contained a critical SQL Injection
+vulnerability that was demonstrated to fully bypass authentication, plus
+several supporting weaknesses (plaintext passwords, hardcoded secret,
+debug mode, no rate limiting). All issues were fixed in `secure_app/`,
+and the fix was verified by re-running the same exploit script against
+the corrected code, confirming the bypass no longer works while
+legitimate logins still succeed.
