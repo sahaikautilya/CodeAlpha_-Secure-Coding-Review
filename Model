@@ -1,0 +1,62 @@
+"""
+MODEL LAYER (Layer 2/3 of the MVC app)
+---------------------------------------
+Handles all communication with the database (users.db).
+
+*** THIS VERSION IS INTENTIONALLY VULNERABLE ***
+It exists so that Task 3 (Secure Coding Review) has something real to
+audit, exploit, and then fix. Do NOT deploy this version anywhere.
+
+Vulnerabilities deliberately included:
+  1. SQL Injection - query built with raw string concatenation
+  2. Plaintext password storage / comparison - no hashing
+"""
+
+import sqlite3
+
+DB_PATH = "users.db"
+
+
+def get_connection():
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    return conn
+
+
+def authenticate_user(username, password):
+    """
+    VULNERABLE: builds SQL using string concatenation/formatting.
+    An attacker can break out of the intended query using input like:
+
+        username:  admin' OR '1'='1
+        password:  anything
+
+    which turns the query into:
+
+        SELECT * FROM users WHERE username = 'admin' OR '1'='1' AND password = 'anything'
+
+    ...which can return a row even without knowing the real password.
+    """
+    conn = get_connection()
+    cur = conn.cursor()
+
+    # --- VULNERABLE LINE (SQL Injection) ---
+    query = "SELECT * FROM users WHERE username = '" + username + \
+            "' AND password = '" + password + "'"
+    cur.execute(query)
+    # ----------------------------------------
+
+    user = cur.fetchone()
+    conn.close()
+    return user
+
+
+def get_user_by_username(username):
+    """Used by the exploit/security-check script to show what data exists."""
+    conn = get_connection()
+    cur = conn.cursor()
+    query = "SELECT * FROM users WHERE username = '" + username + "'"
+    cur.execute(query)
+    user = cur.fetchone()
+    conn.close()
+    return user
