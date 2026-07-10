@@ -1,0 +1,41 @@
+"""
+Creates and seeds users_secure.db with hashed passwords.
+Run this once before testing model_secure.py.
+"""
+
+import sqlite3
+import os
+from werkzeug.security import generate_password_hash
+
+DB_PATH = "users_secure.db"
+
+if os.path.exists(DB_PATH):
+    os.remove(DB_PATH)
+
+conn = sqlite3.connect(DB_PATH)
+cur = conn.cursor()
+
+cur.execute("""
+    CREATE TABLE users (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        username TEXT NOT NULL UNIQUE,
+        password_hash TEXT NOT NULL,
+        role TEXT NOT NULL
+    )
+""")
+
+demo_users = [
+    ("admin", "admin123", "admin"),
+    ("alice", "alice123", "user"),
+    ("bob", "bobpass", "user"),
+]
+
+for username, plain_password, role in demo_users:
+    cur.execute(
+        "INSERT INTO users (username, password_hash, role) VALUES (?, ?, ?)",
+        (username, generate_password_hash(plain_password), role)
+    )
+
+conn.commit()
+conn.close()
+print(f"Secure database '{DB_PATH}' created with hashed passwords.")
