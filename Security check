@@ -1,0 +1,51 @@
+"""
+security_check.py
+-------------------
+This script performs an automated security check on the vulnerable_app.
+It calls the same model.authenticate_user() function the app uses, and
+tries a set of classic SQL Injection payloads to see if any of them can
+bypass the login WITHOUT knowing a real password.
+
+Run from inside vulnerable_app/ after setup_db.py has been run:
+
+    python security_check.py
+
+This is for educational / audit purposes on your own demo app only.
+"""
+
+import sys
+sys.path.insert(0, ".")
+import model
+
+# A handful of well-known SQLi payloads testers use during a manual review
+PAYLOADS = [
+    ("admin' OR '1'='1", "anything"),
+    ("admin'--", "anything"),
+    ("' OR 1=1 --", "anything"),
+    ("nonexistent' OR 'a'='a", "wrongpass"),
+]
+
+print("=" * 60)
+print("SECURITY CHECK: SQL Injection test against login")
+print("=" * 60)
+
+vulnerable_found = False
+
+for username_payload, password_payload in PAYLOADS:
+    result = model.authenticate_user(username_payload, password_payload)
+    status = "BYPASSED LOGIN" if result else "blocked"
+    print(f"\nPayload username: {username_payload!r}")
+    print(f"Payload password: {password_payload!r}")
+    print(f"Result: {status}")
+    if result:
+        vulnerable_found = True
+        print(f"  -> Logged in as: {result['username']} (role={result['role']})")
+
+print("\n" + "=" * 60)
+if vulnerable_found:
+    print("RESULT: VULNERABLE. One or more SQL Injection payloads bypassed "
+          "authentication without a valid password.")
+    print("See SECURITY_REPORT.md for the fix (parameterized queries).")
+else:
+    print("RESULT: No injection bypass detected with these payloads.")
+print("=" * 60)
